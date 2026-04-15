@@ -1,0 +1,19 @@
+# Airflow runtime artifacts
+logs/
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Local virtual envs
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/
