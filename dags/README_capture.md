@@ -21,9 +21,13 @@ docker compose up -d
 ## 2. Connections requeridas
 Crea estas conexiones en Airflow UI (`Admin -> Connections`):
 
-- `google_sheets_default` (tipo Google Cloud): credenciales de Service Account con acceso a tus Sheets.
 - `ssh_capture_default` (tipo SSH): host, puerto 22, usuario y llave/clave del servidor donde vive MongoDB.
 - `mongo_default` (tipo MongoDB): credenciales de Mongo (usuario/password y DB). El host/puerto no se exponen porque el DAG conecta por túnel.
+
+Para Google Sheets tienes 2 opciones:
+- Opción A (service account): `google_sheets_default` (tipo Google Cloud) + variable `GOOGLE_SHEETS_CONN_ID` (opcional).
+- Opción B: `GOOGLE_SHEETS_TOKEN_PICKLE_B64` o `GOOGLE_SHEETS_TOKEN_PICKLE_PATH`.
+  - Si existe alguna de esas variables, el DAG usa `token.pickle` (con refresh) y no requiere `google_sheets_default`.
 
 Si quieres otros IDs, define Variables:
 - `GOOGLE_SHEETS_CONN_ID`
@@ -37,8 +41,8 @@ Si quieres otros IDs, define Variables:
 ### Mobilities
 - `GSHEET_MOBILITIES_INTERNATIONAL_ID`
 - `GSHEET_MOBILITIES_NATIONAL_ID`
-- `GSHEET_MOBILITIES_INTERNATIONAL_RANGE` (opcional, default `A:Z`)
-- `GSHEET_MOBILITIES_NATIONAL_RANGE` (opcional, default `A:Z`)
+- `SHEET_ENTRANTE` (ejemplo: `Movilidad Entrante`)
+- `SHEET_SALIENTE` (ejemplo: `Movilidad Saliente`)
 
 ### Agreements
 - `GSHEET_AGREEMENTS_INTERNATIONAL_ID`
@@ -47,8 +51,10 @@ Si quieres otros IDs, define Variables:
 - `GSHEET_AGREEMENTS_NATIONAL_RANGE` (opcional, default `A:Z`)
 
 ## 4. Colecciones Mongo destino (raw)
-- `mobilities_international_raw`
-- `mobilities_national_raw`
+- `mobilities_international_entrante_raw`
+- `mobilities_international_saliente_raw`
+- `mobilities_national_entrante_raw`
+- `mobilities_national_saliente_raw`
 - `agreements_international_raw`
 - `agreements_national_raw`
 

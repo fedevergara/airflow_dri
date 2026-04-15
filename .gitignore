@@ -1,6 +1,10 @@
 # Airflow runtime artifacts
 logs/
 
+# Local mounted secrets
+config/secrets/
+config/airflow.cfg
+
 # Local env secrets
 .env
 .env.*

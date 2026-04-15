@@ -5,18 +5,32 @@ from capture_pipeline import build_capture_dag
 
 MOBILITIES_SOURCES = [
     {
-        "source_name": "mobilities_international",
+        "source_name": "mobilities_international_entrante",
         "spreadsheet_id_var": "GSHEET_MOBILITIES_INTERNATIONAL_ID",
-        "range_var": "GSHEET_MOBILITIES_INTERNATIONAL_RANGE",
-        "default_range": "A:Z",
-        "collection": "mobilities_international_raw",
+        "range_var": "SHEET_ENTRANTE",
+        "default_range": "Movilidad Entrante",
+        "collection": "mobilities_international_entrante_raw",
     },
     {
-        "source_name": "mobilities_national",
+        "source_name": "mobilities_international_saliente",
+        "spreadsheet_id_var": "GSHEET_MOBILITIES_INTERNATIONAL_ID",
+        "range_var": "SHEET_SALIENTE",
+        "default_range": "Movilidad Saliente",
+        "collection": "mobilities_international_saliente_raw",
+    },
+    {
+        "source_name": "mobilities_national_entrante",
         "spreadsheet_id_var": "GSHEET_MOBILITIES_NATIONAL_ID",
-        "range_var": "GSHEET_MOBILITIES_NATIONAL_RANGE",
-        "default_range": "A:Z",
-        "collection": "mobilities_national_raw",
+        "range_var": "SHEET_ENTRANTE",
+        "default_range": "Movilidad Entrante",
+        "collection": "mobilities_national_entrante_raw",
+    },
+    {
+        "source_name": "mobilities_national_saliente",
+        "spreadsheet_id_var": "GSHEET_MOBILITIES_NATIONAL_ID",
+        "range_var": "SHEET_SALIENTE",
+        "default_range": "Movilidad Saliente",
+        "collection": "mobilities_national_saliente_raw",
     },
 ]
 

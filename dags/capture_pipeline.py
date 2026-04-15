@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import pickle
+from pathlib import Path
 from typing import Any
 
 import pendulum
@@ -55,6 +58,71 @@ def _call_get_values(gsheets_hook: Any, spreadsheet_id: str, range_name: str) ->
         return gsheets_hook.get_values(spreadsheet_id=spreadsheet_id, range_=range_name)
     except TypeError:
         return gsheets_hook.get_values(spreadsheet_id=spreadsheet_id, range_name=range_name)
+
+
+def _normalize_sheet_or_range(value: str, default_range: str = "A:Z") -> str:
+    """Accept sheet name or A1 range; return a valid A1 range."""
+    cleaned = str(value).strip()
+    if not cleaned:
+        return default_range
+    if "!" in cleaned or ":" in cleaned:
+        return cleaned
+    safe_sheet = cleaned.replace("'", "''")
+    return f"'{safe_sheet}'!{default_range}"
+
+
+def _looks_like_file_path(value: str) -> bool:
+    """Best-effort check to detect path-like token values."""
+    cleaned = str(value).strip()
+    return cleaned.startswith(("/", "~", "./", "../")) or cleaned.endswith(".pickle")
+
+
+def _load_values_via_token_pickle(
+    *,
+    spreadsheet_id: str,
+    range_name: str,
+    token_pickle_b64: str = "",
+    token_pickle_path: str = "",
+) -> list[list[str]]:
+    """Load sheet values using OAuth credentials serialized in token.pickle."""
+    try:
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except Exception as exc:
+        raise AirflowException(
+            "Missing Google API libs for token.pickle auth. Install apache-airflow-providers-google."
+        ) from exc
+
+    creds = None
+    if token_pickle_b64:
+        try:
+            creds = pickle.loads(base64.b64decode(token_pickle_b64))
+        except Exception as exc:
+            raise AirflowException("Invalid GOOGLE_SHEETS_TOKEN_PICKLE_B64 value.") from exc
+    elif token_pickle_path:
+        token_path = Path(token_pickle_path).expanduser()
+        if not token_path.exists():
+            raise AirflowException(f"Token pickle not found at '{token_pickle_path}'.")
+        with token_path.open("rb") as token_file:
+            creds = pickle.load(token_file)
+    else:
+        raise AirflowException("No token pickle provided.")
+
+    if creds and getattr(creds, "expired", False) and getattr(creds, "refresh_token", None):
+        creds.refresh(Request())
+
+    if not creds or not getattr(creds, "valid", False):
+        raise AirflowException("No valid credentials in token.pickle. Regenerate OAuth token.")
+
+    service = build("sheets", "v4", credentials=creds)
+    values = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=range_name)
+        .execute()
+        .get("values", [])
+    )
+    return values
 
 
 def _build_mongo_client_kwargs(mongo_conn_id: str) -> tuple[dict[str, Any], str]:
@@ -129,7 +197,8 @@ def build_capture_dag(
             resolved: list[dict[str, Any]] = []
             for source in sources:
                 spreadsheet_id = _get_required_variable(source["spreadsheet_id_var"])
-                range_name = Variable.get(source["range_var"], default_var=source["default_range"])
+                range_raw = Variable.get(source["range_var"], default_var=source["default_range"])
+                range_name = _normalize_sheet_or_range(range_raw, default_range="A:Z")
                 resolved.append(
                     {
                         "source_name": source["source_name"],
@@ -151,13 +220,6 @@ def build_capture_dag(
         @task
         def capture_source(source: dict[str, Any]) -> dict[str, Any]:
             try:
-                from airflow.providers.google.suite.hooks.sheets import GSheetsHook
-            except Exception as exc:
-                raise AirflowException(
-                    "Missing Google provider. Install: apache-airflow-providers-google"
-                ) from exc
-
-            try:
                 from airflow.providers.ssh.hooks.ssh import SSHHook
             except Exception as exc:
                 raise AirflowException(
@@ -169,12 +231,34 @@ def build_capture_dag(
             logical_date = context["logical_date"].to_iso8601_string()
             extracted_at = pendulum.now("UTC").to_iso8601_string()
 
-            gsheets_hook = GSheetsHook(gcp_conn_id=source["gcp_conn_id"])
-            values = _call_get_values(
-                gsheets_hook=gsheets_hook,
-                spreadsheet_id=source["spreadsheet_id"],
-                range_name=source["range_name"],
-            )
+            token_pickle_b64 = Variable.get("GOOGLE_SHEETS_TOKEN_PICKLE_B64", default_var="").strip()
+            token_pickle_path = Variable.get("GOOGLE_SHEETS_TOKEN_PICKLE_PATH", default_var="").strip()
+            # Backward compatibility: allow putting a file path in GOOGLE_SHEETS_TOKEN_PICKLE_B64.
+            if token_pickle_b64 and not token_pickle_path and _looks_like_file_path(token_pickle_b64):
+                token_pickle_path = token_pickle_b64
+                token_pickle_b64 = ""
+
+            if token_pickle_b64 or token_pickle_path:
+                values = _load_values_via_token_pickle(
+                    spreadsheet_id=source["spreadsheet_id"],
+                    range_name=source["range_name"],
+                    token_pickle_b64=token_pickle_b64,
+                    token_pickle_path=token_pickle_path,
+                )
+            else:
+                try:
+                    from airflow.providers.google.suite.hooks.sheets import GSheetsHook
+                except Exception as exc:
+                    raise AirflowException(
+                        "Missing Google provider. Install: apache-airflow-providers-google"
+                    ) from exc
+
+                gsheets_hook = GSheetsHook(gcp_conn_id=source["gcp_conn_id"])
+                values = _call_get_values(
+                    gsheets_hook=gsheets_hook,
+                    spreadsheet_id=source["spreadsheet_id"],
+                    range_name=source["range_name"],
+                )
 
             if not values or len(values) < 2:
                 return {
