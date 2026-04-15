@@ -1,7 +1,7 @@
 """Capture international and national mobilities from Google Sheets into MongoDB."""
 
 from airflow.models.dag import DAG  # noqa: F401 - Helps DAG safe discovery.
-from capture_pipeline import build_capture_dag
+from capture.capture_pipeline import build_capture_dag
 
 MOBILITIES_SOURCES = [
     {
