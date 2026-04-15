@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import pickle
 from pathlib import Path
 from typing import Any
@@ -60,7 +61,7 @@ def _call_get_values(gsheets_hook: Any, spreadsheet_id: str, range_name: str) ->
         return gsheets_hook.get_values(spreadsheet_id=spreadsheet_id, range_name=range_name)
 
 
-def _normalize_sheet_or_range(value: str, default_range: str = "A:Z") -> str:
+def _normalize_sheet_or_range(value: str, default_range: str = "A:ZZZ") -> str:
     """Accept sheet name or A1 range; return a valid A1 range."""
     cleaned = str(value).strip()
     if not cleaned:
@@ -77,22 +78,39 @@ def _looks_like_file_path(value: str) -> bool:
     return cleaned.startswith(("/", "~", "./", "../")) or cleaned.endswith(".pickle")
 
 
-def _load_values_via_token_pickle(
+def _derive_via(source_name: str) -> str:
+    """Infer mobility direction from source name."""
+    lowered = source_name.lower()
+    if "entrante" in lowered:
+        return "Entrante"
+    if "saliente" in lowered:
+        return "Saliente"
+    return "NoDefinida"
+
+
+def _derive_ambito(source_name: str) -> str:
+    """Infer mobility scope from source name."""
+    lowered = source_name.lower()
+    if "international" in lowered or "internacional" in lowered:
+        return "internacional"
+    if "national" in lowered or "nacional" in lowered:
+        return "nacional"
+    return "no_definido"
+
+
+def _parse_sheet_names(value: str) -> list[str]:
+    """Parse comma/newline separated sheet names."""
+    raw = str(value).replace(";", ",").replace("\n", ",")
+    parsed = [item.strip() for item in raw.split(",") if item.strip()]
+    return parsed
+
+
+def _get_google_credentials(
     *,
-    spreadsheet_id: str,
-    range_name: str,
     token_pickle_b64: str = "",
     token_pickle_path: str = "",
-) -> list[list[str]]:
-    """Load sheet values using OAuth credentials serialized in token.pickle."""
-    try:
-        from google.auth.transport.requests import Request
-        from googleapiclient.discovery import build
-    except Exception as exc:
-        raise AirflowException(
-            "Missing Google API libs for token.pickle auth. Install apache-airflow-providers-google."
-        ) from exc
-
+) -> Any:
+    """Load and refresh OAuth credentials serialized in token.pickle."""
     creds = None
     if token_pickle_b64:
         try:
@@ -109,10 +127,35 @@ def _load_values_via_token_pickle(
         raise AirflowException("No token pickle provided.")
 
     if creds and getattr(creds, "expired", False) and getattr(creds, "refresh_token", None):
+        from google.auth.transport.requests import Request
+
         creds.refresh(Request())
 
     if not creds or not getattr(creds, "valid", False):
         raise AirflowException("No valid credentials in token.pickle. Regenerate OAuth token.")
+
+    return creds
+
+
+def _load_values_via_token_pickle(
+    *,
+    spreadsheet_id: str,
+    range_name: str,
+    token_pickle_b64: str = "",
+    token_pickle_path: str = "",
+) -> list[list[str]]:
+    """Load sheet values using OAuth credentials serialized in token.pickle."""
+    try:
+        from googleapiclient.discovery import build
+    except Exception as exc:
+        raise AirflowException(
+            "Missing Google API libs for token.pickle auth. Install apache-airflow-providers-google."
+        ) from exc
+
+    creds = _get_google_credentials(
+        token_pickle_b64=token_pickle_b64,
+        token_pickle_path=token_pickle_path,
+    )
 
     service = build("sheets", "v4", credentials=creds)
     values = (
@@ -123,6 +166,75 @@ def _load_values_via_token_pickle(
         .get("values", [])
     )
     return values
+
+
+def _load_rows_via_drive_excel(
+    *,
+    file_id: str,
+    sheet_names: list[str],
+    token_pickle_path: str,
+) -> list[dict[str, Any]]:
+    """Download Excel file from Drive and return normalized row records."""
+    try:
+        import pandas as pd
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+    except Exception as exc:
+        raise AirflowException(
+            "Missing dependencies for Drive Excel capture. Install openpyxl and google-api-python-client."
+        ) from exc
+
+    creds = _get_google_credentials(token_pickle_path=token_pickle_path)
+    drive = build("drive", "v3", credentials=creds)
+
+    request = drive.files().get_media(fileId=file_id)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    buffer.seek(0)
+    try:
+        excel_obj = pd.read_excel(
+            buffer,
+            sheet_name=sheet_names if sheet_names else None,
+            dtype=str,
+            engine="openpyxl",
+        )
+    except Exception as exc:
+        raise AirflowException(
+            "Could not read Drive Excel file. Ensure openpyxl is installed and sheet names are valid."
+        ) from exc
+
+    if isinstance(excel_obj, dict):
+        sheet_frames = excel_obj
+    else:
+        sheet_frames = {"Sheet1": excel_obj}
+
+    records: list[dict[str, Any]] = []
+    for sheet_name, dataframe in sheet_frames.items():
+        if dataframe is None:
+            continue
+        dataframe = dataframe.fillna("")
+        headers = _build_headers([str(col) for col in list(dataframe.columns)])
+
+        for row_number, row in enumerate(dataframe.itertuples(index=False, name=None), start=2):
+            normalized_row = [str(item) if item is not None else "" for item in row]
+            row_payload = {
+                header: normalized_row[idx] if idx < len(normalized_row) else ""
+                for idx, header in enumerate(headers)
+            }
+            records.append(
+                {
+                    "row_number": row_number,
+                    "raw_row": normalized_row,
+                    "raw_payload": row_payload,
+                    "source_sheet": str(sheet_name),
+                }
+            )
+
+    return records
 
 
 def _build_mongo_client_kwargs(mongo_conn_id: str) -> tuple[dict[str, Any], str]:
@@ -189,7 +301,7 @@ def build_capture_dag(
         def resolve_sources() -> list[dict[str, Any]]:
             gcp_conn_id = Variable.get("GOOGLE_SHEETS_CONN_ID", default_var="google_sheets_default")
             mongo_conn_id = Variable.get("MONGO_CAPTURE_CONN_ID", default_var="mongo_default")
-            mongo_db = Variable.get("MONGO_CAPTURE_DB", default_var="capture_raw")
+            mongo_db = Variable.get("MONGO_CAPTURE_DB", default_var="international")
             ssh_conn_id = Variable.get("MONGO_CAPTURE_SSH_CONN_ID", default_var="ssh_capture_default")
             mongo_remote_host = Variable.get("MONGO_CAPTURE_REMOTE_HOST", default_var="127.0.0.1")
             mongo_remote_port = int(Variable.get("MONGO_CAPTURE_REMOTE_PORT", default_var="27017"))
@@ -197,14 +309,38 @@ def build_capture_dag(
             resolved: list[dict[str, Any]] = []
             for source in sources:
                 spreadsheet_id = _get_required_variable(source["spreadsheet_id_var"])
+                source_mode = str(source.get("source_mode", "google_sheets")).strip().lower()
                 range_raw = Variable.get(source["range_var"], default_var=source["default_range"])
-                range_name = _normalize_sheet_or_range(range_raw, default_range="A:Z")
+
+                if source_mode == "drive_excel":
+                    drive_sheet_names = _parse_sheet_names(range_raw)
+                    range_name = ",".join(drive_sheet_names) if drive_sheet_names else "ALL_SHEETS"
+                    drive_token_path_var = source.get(
+                        "drive_token_path_var",
+                        "GOOGLE_DRIVE_TOKEN_PICKLE_PATH",
+                    )
+                    drive_token_path_default = source.get(
+                        "drive_token_path_default",
+                        "/opt/airflow/config/secrets/agreements/agreements_token.pickle",
+                    )
+                    drive_token_path = Variable.get(
+                        drive_token_path_var,
+                        default_var=drive_token_path_default,
+                    ).strip()
+                else:
+                    range_name = _normalize_sheet_or_range(range_raw, default_range="A:ZZZ")
+                    drive_sheet_names = []
+                    drive_token_path = ""
+
                 resolved.append(
                     {
                         "source_name": source["source_name"],
+                        "source_mode": source_mode,
                         "source_type": source_type,
                         "spreadsheet_id": spreadsheet_id,
                         "range_name": range_name,
+                        "drive_sheet_names": drive_sheet_names,
+                        "drive_token_path": drive_token_path,
                         "collection": source["collection"],
                         "gcp_conn_id": gcp_conn_id,
                         "mongo_conn_id": mongo_conn_id,
@@ -238,64 +374,125 @@ def build_capture_dag(
                 token_pickle_path = token_pickle_b64
                 token_pickle_b64 = ""
 
-            if token_pickle_b64 or token_pickle_path:
-                values = _load_values_via_token_pickle(
-                    spreadsheet_id=source["spreadsheet_id"],
-                    range_name=source["range_name"],
-                    token_pickle_b64=token_pickle_b64,
-                    token_pickle_path=token_pickle_path,
+            source_mode = str(source.get("source_mode", "google_sheets")).strip().lower()
+            if source_mode == "drive_excel":
+                if not source.get("drive_token_path"):
+                    raise AirflowException(
+                        "Missing drive token path for drive_excel source. Set GOOGLE_DRIVE_TOKEN_PICKLE_PATH."
+                    )
+                records = _load_rows_via_drive_excel(
+                    file_id=source["spreadsheet_id"],
+                    sheet_names=source.get("drive_sheet_names", []),
+                    token_pickle_path=source["drive_token_path"],
                 )
             else:
-                try:
-                    from airflow.providers.google.suite.hooks.sheets import GSheetsHook
-                except Exception as exc:
-                    raise AirflowException(
-                        "Missing Google provider. Install: apache-airflow-providers-google"
-                    ) from exc
+                if token_pickle_b64 or token_pickle_path:
+                    values = _load_values_via_token_pickle(
+                        spreadsheet_id=source["spreadsheet_id"],
+                        range_name=source["range_name"],
+                        token_pickle_b64=token_pickle_b64,
+                        token_pickle_path=token_pickle_path,
+                    )
+                else:
+                    try:
+                        from airflow.providers.google.suite.hooks.sheets import GSheetsHook
+                    except Exception as exc:
+                        raise AirflowException(
+                            "Missing Google provider. Install: apache-airflow-providers-google"
+                        ) from exc
 
-                gsheets_hook = GSheetsHook(gcp_conn_id=source["gcp_conn_id"])
-                values = _call_get_values(
-                    gsheets_hook=gsheets_hook,
-                    spreadsheet_id=source["spreadsheet_id"],
-                    range_name=source["range_name"],
-                )
+                    gsheets_hook = GSheetsHook(gcp_conn_id=source["gcp_conn_id"])
+                    values = _call_get_values(
+                        gsheets_hook=gsheets_hook,
+                        spreadsheet_id=source["spreadsheet_id"],
+                        range_name=source["range_name"],
+                    )
 
-            if not values or len(values) < 2:
+                if not values or len(values) < 2:
+                    return {
+                        "source_name": source["source_name"],
+                        "rows_inserted": 0,
+                        "message": "Sheet has no data rows (header only or empty).",
+                    }
+
+                headers = _build_headers(values[0])
+                data_rows = values[1:]
+                records = []
+                for row_number, row in enumerate(data_rows, start=2):
+                    normalized_row = [str(item) if item is not None else "" for item in row]
+                    row_payload = {
+                        header: normalized_row[idx] if idx < len(normalized_row) else ""
+                        for idx, header in enumerate(headers)
+                    }
+                    records.append(
+                        {
+                            "row_number": row_number,
+                            "raw_row": normalized_row,
+                            "raw_payload": row_payload,
+                            "source_sheet": "",
+                        }
+                    )
+
+            if not records:
                 return {
                     "source_name": source["source_name"],
                     "rows_inserted": 0,
-                    "message": "Sheet has no data rows (header only or empty).",
+                    "message": "Source has no data rows.",
                 }
 
-            headers = _build_headers(values[0])
-            data_rows = values[1:]
+            via = _derive_via(source["source_name"])
+            ambito = _derive_ambito(source["source_name"])
 
             mongo_kwargs, default_db = _build_mongo_client_kwargs(source["mongo_conn_id"])
             target_db = source["mongo_db"] or default_db
-            documents = []
-            for row_number, row in enumerate(data_rows, start=2):
-                normalized_row = [str(item) if item is not None else "" for item in row]
-                row_payload = {
-                    header: normalized_row[idx] if idx < len(normalized_row) else ""
-                    for idx, header in enumerate(headers)
-                }
+            operations = []
+            for record in records:
+                row_number = int(record["row_number"])
+                normalized_row = [str(item) if item is not None else "" for item in record["raw_row"]]
+                row_payload = dict(record["raw_payload"])
+                row_payload["vía"] = via
+                row_payload["ambito"] = ambito
+                source_sheet = str(record.get("source_sheet", "")).strip()
+                if source_sheet:
+                    row_payload["source_sheet"] = source_sheet
+
+                fingerprint_parts = [source["source_name"]]
+                if source_sheet:
+                    fingerprint_parts.append(source_sheet)
+                fingerprint_parts.append("|".join(normalized_row))
                 row_fingerprint = hashlib.sha256(
-                    (source["source_name"] + "|" + "|".join(normalized_row)).encode("utf-8")
+                    "|".join(fingerprint_parts).encode("utf-8")
                 ).hexdigest()
 
-                documents.append(
+                operations.append(
                     {
-                        "source": source["source_name"],
-                        "source_type": source["source_type"],
-                        "spreadsheet_id": source["spreadsheet_id"],
-                        "sheet_range": source["range_name"],
-                        "row_number": row_number,
-                        "row_fingerprint": row_fingerprint,
-                        "extracted_at": extracted_at,
-                        "logical_date": logical_date,
-                        "airflow_run_id": run_id,
-                        "raw_payload": row_payload,
-                        "raw_row": normalized_row,
+                        "filter": {
+                            "source": source["source_name"],
+                            "row_fingerprint": row_fingerprint,
+                        },
+                        "update": {
+                            "$setOnInsert": {
+                                "source": source["source_name"],
+                                "source_type": source["source_type"],
+                                "spreadsheet_id": source["spreadsheet_id"],
+                                "row_fingerprint": row_fingerprint,
+                                "first_extracted_at": extracted_at,
+                                "first_logical_date": logical_date,
+                                "first_airflow_run_id": run_id,
+                            },
+                            "$set": {
+                                "sheet_range": source["range_name"],
+                                "row_number": row_number,
+                                "source_sheet": source_sheet,
+                                "raw_payload": row_payload,
+                                "raw_row": normalized_row,
+                                "vía": via,
+                                "ambito": ambito,
+                                "last_extracted_at": extracted_at,
+                                "last_logical_date": logical_date,
+                                "last_airflow_run_id": run_id,
+                            },
+                        },
                     }
                 )
 
@@ -307,8 +504,10 @@ def build_capture_dag(
             tunnel.start()
 
             mongo_client = None
+            inserted = 0
+            updated = 0
             try:
-                from pymongo import MongoClient
+                from pymongo import MongoClient, UpdateOne
 
                 mongo_client = MongoClient(
                     host="127.0.0.1",
@@ -316,8 +515,20 @@ def build_capture_dag(
                     **mongo_kwargs,
                 )
                 collection = mongo_client[target_db][source["collection"]]
-                if documents:
-                    collection.insert_many(documents, ordered=False)
+                if operations:
+                    result = collection.bulk_write(
+                        [
+                            UpdateOne(
+                                filter=operation["filter"],
+                                update=operation["update"],
+                                upsert=True,
+                            )
+                            for operation in operations
+                        ],
+                        ordered=False,
+                    )
+                    inserted = int(result.upserted_count or 0)
+                    updated = int(result.modified_count or 0)
             finally:
                 if mongo_client is not None:
                     mongo_client.close()
@@ -325,7 +536,9 @@ def build_capture_dag(
 
             return {
                 "source_name": source["source_name"],
-                "rows_inserted": len(documents),
+                "rows_processed": len(records),
+                "rows_inserted": inserted,
+                "rows_updated": updated,
                 "mongo_db": target_db,
                 "mongo_collection": source["collection"],
             }
