@@ -1,6 +1,11 @@
 # Airflow runtime artifacts
 logs/
 
+# Local env secrets
+.env
+.env.*
+!.env.example
+
 # Python cache/artifacts
 __pycache__/
 *.py[cod]
