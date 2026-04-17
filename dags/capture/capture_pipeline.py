@@ -174,10 +174,16 @@ def _load_rows_via_drive_excel(
     sheet_names: list[str],
     token_pickle_path: str,
 ) -> list[dict[str, Any]]:
-    """Download Excel file from Drive and return normalized row records."""
+    """Download Excel-like content from Drive and return normalized row records.
+
+    Supports both:
+    - Binary `.xlsx` files (`files.get_media`)
+    - Google Sheets native files (`files.export_media` to xlsx)
+    """
     try:
         import pandas as pd
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaIoBaseDownload
     except Exception as exc:
         raise AirflowException(
@@ -187,14 +193,29 @@ def _load_rows_via_drive_excel(
     creds = _get_google_credentials(token_pickle_path=token_pickle_path)
     drive = build("drive", "v3", credentials=creds)
 
-    request = drive.files().get_media(fileId=file_id)
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
+    def _download_to_buffer(request: Any) -> io.BytesIO:
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+        return buffer
 
-    buffer.seek(0)
+    try:
+        buffer = _download_to_buffer(drive.files().get_media(fileId=file_id))
+    except HttpError as exc:
+        # Google Sheets native files are not directly downloadable via get_media.
+        # Fall back to exporting as xlsx.
+        details = str(exc)
+        if getattr(exc, "resp", None) and exc.resp.status == 403 and "fileNotDownloadable" in details:
+            export_request = drive.files().export_media(
+                fileId=file_id,
+                mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            buffer = _download_to_buffer(export_request)
+        else:
+            raise
     try:
         excel_obj = pd.read_excel(
             buffer,

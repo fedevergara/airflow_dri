@@ -44,9 +44,11 @@ Si quieres otros IDs, define Variables:
 - `SHEET_ENTRANTE` (ejemplo: `Movilidad Entrante`)
 - `SHEET_SALIENTE` (ejemplo: `Movilidad Saliente`)
 
-### Agreements (international)
+### Agreements (international + national)
 - `GSHEET_AGREEMENTS_INTERNATIONAL_ID` (Drive file id del `.xlsx`)
 - `GSHEET_AGREEMENTS_INTERNATIONAL_RANGE` (opcional, hojas separadas por coma; default `ACTIVOS,INACTIVOS`)
+- `GSHEET_AGREEMENTS_NATIONAL_ID` (Drive file id del `.xlsx`)
+- `GSHEET_AGREEMENTS_NATIONAL_RANGE` (opcional, hojas separadas por coma; default `ACTIVOS,INACTIVOS`)
 - `GOOGLE_DRIVE_TOKEN_PICKLE_PATH` (opcional, default `/opt/airflow/config/secrets/agreements/agreements_token.pickle`)
 
 ## 4. Colecciones Mongo destino (raw)
