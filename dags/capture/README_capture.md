@@ -51,6 +51,8 @@ Si quieres otros IDs, define Variables:
 - `GSHEET_AGREEMENTS_NATIONAL_RANGE` (opcional, hojas separadas por coma; default `ACTIVOS,INACTIVOS`)
 - `GOOGLE_DRIVE_TOKEN_PICKLE_PATH` (opcional, default `/opt/airflow/config/secrets/agreements/agreements_token.pickle`)
 
+Nunca documentes en este repo IDs reales de Sheets/Drive, tokens, credenciales, hosts o rutas privadas. En documentación usa placeholders y configura los valores reales directamente en Airflow o en el servidor.
+
 ## 4. Colecciones Mongo destino (raw)
 - Base de datos: `international`
 - Colección para `capture_mobilities`: `mobilities`
@@ -88,7 +90,7 @@ Ejemplo:
 docker compose exec airflow-worker python /opt/airflow/config/scripts/bootstrap_drive_token.py \
   --token-path /opt/airflow/config/secrets/agreements/agreements_token.pickle \
   --client-secrets /opt/airflow/config/secrets/agreements/credentials.json \
-  --file-id 1iXADw9QAsWiZYXeFrf6W8uoiO20ydFY8
+  --file-id TU_DRIVE_FILE_ID
 ```
 
 Si no puedes usar callback local, agrega `--use-console`.

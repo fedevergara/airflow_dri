@@ -5,7 +5,7 @@ Usage examples:
   python bootstrap_drive_token.py \
     --token-path /opt/airflow/config/secrets/agreements_token.pickle \
     --client-secrets /opt/airflow/config/secrets/credentials.json \
-    --file-id 1iXADw9QAsWiZYXeFrf6W8uoiO20ydFY8
+    --file-id TU_DRIVE_FILE_ID
 
   # If browser callback is not possible in your environment:
   python bootstrap_drive_token.py --use-console ...

@@ -12,8 +12,8 @@ from airflow.providers.ssh.operators.ssh import SSHOperator
 
 DAG_ID = "export_mobilities_observatory"
 DEFAULT_REMOTE_DIR = "/srv/mobilities_transform"
-DEFAULT_SPREADSHEET_ID = "1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k"
-DEFAULT_SHEET_NAME = "mobilidades"
+DEFAULT_SPREADSHEET_ID = ""
+DEFAULT_SHEET_NAME = "movilidades"
 
 
 def _quote(value: str) -> str:
@@ -86,18 +86,21 @@ def export_mobilities_observatory() -> None:
         in {"1", "true", "yes", "y"}
     )
 
-    transform_command = (
-        f"flock -n {_quote(lock_path)} "
-        f"{_quote(python_bin)} {_quote(script_path)} "
-        f"--db {_quote(db_name)} "
-        f"--collection {_quote(collection)} "
-        f"--source-type {_quote(source_type)} "
-        f"--spreadsheet-id {_quote(spreadsheet_id)} "
-        f"--sheet-name {_quote(sheet_name)} "
-        f"--token-path {_quote(token_path)} "
-        f"--batch-size {_quote(str(batch_size))} "
-        f"--chunk-size {_quote(str(chunk_size))}"
-    )
+    transform_command_parts = [
+        f"flock -n {_quote(lock_path)}",
+        _quote(python_bin),
+        _quote(script_path),
+        f"--db {_quote(db_name)}",
+        f"--collection {_quote(collection)}",
+        f"--source-type {_quote(source_type)}",
+        f"--sheet-name {_quote(sheet_name)}",
+        f"--token-path {_quote(token_path)}",
+        f"--batch-size {_quote(str(batch_size))}",
+        f"--chunk-size {_quote(str(chunk_size))}",
+    ]
+    if str(spreadsheet_id).strip():
+        transform_command_parts.append(f"--spreadsheet-id {_quote(spreadsheet_id)}")
+    transform_command = " ".join(transform_command_parts)
     if dry_run:
         transform_command = f"{transform_command} --dry-run"
     if skip_backup:

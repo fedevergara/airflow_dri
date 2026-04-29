@@ -47,8 +47,8 @@ MONGO_URI='mongodb://localhost:27017/'
 MOBILITIES_RAW_DB='international'
 MOBILITIES_RAW_COLLECTION='mobilities'
 MOBILITIES_RAW_SOURCE_TYPE='mobilities'
-MOBILITIES_TRANSFORM_SPREADSHEET_ID='1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k'
-MOBILITIES_TRANSFORM_SHEET_NAME='mobilidades'
+MOBILITIES_TRANSFORM_SPREADSHEET_ID='TU_SPREADSHEET_ID'
+MOBILITIES_TRANSFORM_SHEET_NAME='movilidades'
 EOF
 chmod 600 "$MOBILITIES_TRANSFORM_DIR/.env"
 ```
@@ -60,6 +60,8 @@ Usa una connection SSH al servidor remoto. Por defecto el DAG reutiliza:
 - `ssh_capture_default`
 
 Si prefieres otra, define `MOBILITIES_TRANSFORM_SSH_CONN_ID`.
+
+Nunca documentes en este repo IDs reales de Sheets/Drive, tokens, credenciales, hosts o rutas privadas. Usa placeholders en la documentación y carga los valores reales solo en Airflow o en el servidor remoto.
 
 ## 3. Variables de Airflow
 
@@ -77,8 +79,8 @@ Por compatibilidad, se mantienen con prefijo `MOBILITIES_TRANSFORM_` para no obl
 - `MOBILITIES_TRANSFORM_DB`: default `international`
 - `MOBILITIES_TRANSFORM_COLLECTION`: default `mobilities`
 - `MOBILITIES_TRANSFORM_SOURCE_TYPE`: default `mobilities`
-- `MOBILITIES_TRANSFORM_SPREADSHEET_ID`: default `1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k`
-- `MOBILITIES_TRANSFORM_SHEET_NAME`: default `mobilidades`
+- `MOBILITIES_TRANSFORM_SPREADSHEET_ID`: ID del Google Sheet destino. No documentar el valor real en el repo.
+- `MOBILITIES_TRANSFORM_SHEET_NAME`: default `movilidades`
 - `MOBILITIES_TRANSFORM_CMD_TIMEOUT`: default `7200`
 - `MOBILITIES_TRANSFORM_BATCH_SIZE`: default `1000`
 - `MOBILITIES_TRANSFORM_CHUNK_SIZE`: default `5000`
@@ -114,7 +116,7 @@ cd /ruta/remota/mobilities_transform
 ./venv/bin/python transform_mobilities_observatory.py \
   --db international \
   --collection mobilities \
-  --spreadsheet-id 1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k \
+  --spreadsheet-id TU_SPREADSHEET_ID \
   --sheet-name movilidades \
   --token-path /ruta/remota/mobilities_transform/secrets/token.pickle \
   --dry-run

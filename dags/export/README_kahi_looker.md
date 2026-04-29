@@ -1,7 +1,7 @@
-# UdeA Scientific Production Looker Load
+# UdeA Scientific Production Looker Export
 
 DAG creado:
-- `load_udea_scientific_production_looker`
+- `export_udea_scientific_production_looker`
 
 Este DAG carga la producción científica de la UdeA en Google Sheets para visualizarla en Looker Studio. No lee MongoDB desde el worker de Airflow; ejecuta por SSH un script en el servidor remoto donde MongoDB puede responder por `localhost`.
 

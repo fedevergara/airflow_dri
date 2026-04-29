@@ -1,4 +1,4 @@
-"""Load UdeA scientific production into the Looker Google Sheet."""
+"""Export UdeA scientific production into the Looker Google Sheet."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from airflow.models import Variable
 from airflow.providers.ssh.operators.ssh import SSHOperator
 
 
-DAG_ID = "load_udea_scientific_production_looker"
+DAG_ID = "export_udea_scientific_production_looker"
 DEFAULT_REMOTE_DIR = "/srv/kahi_exports"
 
 
@@ -20,14 +20,14 @@ def _quote(value: str) -> str:
 
 @dag(
     dag_id=DAG_ID,
-    description="Load UdeA scientific production into Google Sheets for Looker Studio.",
+    description="Export UdeA scientific production into Google Sheets for Looker Studio.",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     schedule="@daily",
     catchup=False,
     max_active_runs=1,
     tags=["export", "kahi", "looker", "google-sheets"],
 )
-def load_udea_scientific_production_looker() -> None:
+def export_udea_scientific_production_looker() -> None:
     remote_dir = Variable.get("KAHI_LOOKER_REMOTE_DIR", default_var=DEFAULT_REMOTE_DIR)
     python_bin = Variable.get(
         "KAHI_LOOKER_REMOTE_PYTHON",
@@ -113,4 +113,4 @@ def load_udea_scientific_production_looker() -> None:
     prepare_remote_runtime >> run_remote_export
 
 
-load_udea_scientific_production_looker()
+export_udea_scientific_production_looker()

@@ -18,8 +18,8 @@ DEFAULT_DB = "international"
 DEFAULT_COLLECTION = "mobilities"
 DEFAULT_SOURCE_TYPE = "mobilities"
 DEFAULT_MONGO_URI = "mongodb://localhost:27017/"
-DEFAULT_SPREADSHEET_ID = "1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k"
-DEFAULT_SHEET_NAME = "mobilidades"
+DEFAULT_SPREADSHEET_ID = ""
+DEFAULT_SHEET_NAME = "movilidades"
 
 REQUIREMENTS = [
     "pandas",

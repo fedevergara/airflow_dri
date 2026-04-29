@@ -24,9 +24,10 @@ from pymongo import MongoClient
 
 DEFAULT_DB_NAME = "international"
 DEFAULT_COLLECTION = "mobilities"
-DEFAULT_SPREADSHEET_ID = "1vhZIZ2To_PSe8PldkfLr56hoboMZ6HpMmDWtfV7Wh2k"
-DEFAULT_SHEET_NAME = "mobilidades"
+DEFAULT_SPREADSHEET_ID = ""
+DEFAULT_SHEET_NAME = "movilidades"
 DEFAULT_TOKEN_PATH = "/srv/mobilities_transform/secrets/token.pickle"
+MIN_YEAR = 2015
 
 YEAR_COL = "año"
 TARGET_COLUMNS = [
@@ -66,6 +67,18 @@ COMMON_CANDIDATES = {
         "PROGRAMA ACADEMICO AL QUE PERTENECE",
         "PROGRAMA ACADÉMICO DONDE HARA LA MOVILIDAD",
         "PROGRAMA ACADÉMICO AL QUE PERTENECE",
+    ],
+    "codigo_programa_udea": [
+        "CÓDIGO UDEA PROGRAMA",
+        "CODIGO UDEA PROGRAMA",
+        "CÓDIGO UDEA\n(PROGRAMA)",
+        "CODIGO UDEA\n(PROGRAMA)",
+    ],
+    "codigo_unidad_udea": [
+        "CÓDIGO UDEA UA",
+        "CODIGO UDEA UA",
+        "CÓDIGO UDEA",
+        "CODIGO UDEA",
     ],
     "tipo_movilidad": ["TIPO DE MOVILIDAD"],
     "categoria_estudiante": [
@@ -128,18 +141,32 @@ TIPO_MOVILIDAD_MAPPING = {
 
 CAMPUS_MAPPING = {
     "sede central (medellin)": "Campus Medellín",
+    "campus medellin": "Campus Medellín",
     "occidente (santa fe de antioquia)": "Campus Santa Fe de Antioquia",
+    "campus santa fe de antioquia": "Campus Santa Fe de Antioquia",
     "sonson": "Campus Sonsón",
+    "campus sonson": "Campus Sonsón",
     "suroeste (andes)": "Campus Andes",
+    "campus andes": "Campus Andes",
     "oriente (el carmen de viboral)": "Campus El Carmen de Viboral",
+    "campus el carmen de viboral": "Campus El Carmen de Viboral",
     "amalfi": "Campus Amalfi",
+    "campus amalfi": "Campus Amalfi",
     "uraba (apartado, turbo y carepa)": "Campus Urabá",
+    "campus uraba": "Campus Urabá",
     "region": "Campus Medellín",
     "norte (yarumal)": "Campus Yarumal",
-    "": "Campus Medellín",
+    "campus yarumal": "Campus Yarumal",
     "no aplica": "No Aplica",
-    "campus sonson": "Campus Sonsón",
+    "campus caucasia": "Campus Caucasia",
+    "campus magdalena medio": "Campus Magdalena Medio",
+    "campus carepa": "Campus Carepa",
+    "campus apartado": "Campus Apartadó",
+    "campus segovia": "Campus Segovia",
+    "campus puerto berrio": "Campus Puerto Berrío",
 }
+
+PLACEHOLDER_NAMES = {"", "no aplica", "no informa", "n/a", "na"}
 
 PAIS_ES_MAPPING = {
     "estados unidos de america": "Estados Unidos",
@@ -199,7 +226,8 @@ def normalize_text(value: Any) -> str:
 
 
 def clean_missing(value: Any) -> str:
-    text = "" if value is None else str(value).strip()
+    text = "" if value is None else str(value).replace("\xa0", " ").strip()
+    text = " ".join(text.split())
     return "" if normalize_text(text) in {"", "no informa", "n", "nan", "none"} else text
 
 
@@ -217,12 +245,17 @@ def titlecase_spanish(value: Any) -> str:
 
 
 def pick_column(df_raw: pd.DataFrame, candidates: list[str]) -> pd.Series:
-    normalized_lookup = {normalize_text(col): col for col in df_raw.columns}
+    normalized_lookup: dict[str, list[str]] = {}
+    for col in df_raw.columns:
+        normalized_lookup.setdefault(normalize_text(col), []).append(col)
+
+    result = pd.Series([""] * len(df_raw), index=df_raw.index, dtype="object")
     for candidate in candidates:
-        source_col = normalized_lookup.get(normalize_text(candidate))
-        if source_col:
-            return df_raw[source_col]
-    return pd.Series([""] * len(df_raw), index=df_raw.index)
+        for source_col in normalized_lookup.get(normalize_text(candidate), []):
+            source_values = df_raw[source_col].fillna("").astype(str).str.strip()
+            fill_mask = result.eq("") & source_values.ne("")
+            result = result.where(~fill_mask, source_values)
+    return result
 
 
 def map_categoria(value: Any) -> str:
@@ -273,11 +306,18 @@ def map_yes_no(value: Any) -> str:
     return clean_missing(value)
 
 
+def map_movilidad_por_convenio(value: Any, ambito: str) -> str:
+    norm = normalize_text(value)
+    if ambito == "Nacional":
+        return "No" if norm in {"", "n", "no", "none"} else "Sí"
+    return map_yes_no(value)
+
+
 def map_modalidad(value: Any, ambito: str) -> str:
     norm = normalize_text(value)
     if norm == "virtual":
         return "Virtual"
-    if norm == "presencial":
+    if norm in {"presencial", "mixta"}:
         return "Presencial"
     if not norm and ambito == "Nacional":
         return "Presencial"
@@ -318,21 +358,45 @@ def parse_semester(value: Any, fecha_inicio: Any, ambito: str) -> str:
     return ""
 
 
-def map_ambito(value: Any) -> str:
-    norm = normalize_text(value)
-    if "nacional" in norm or "national" in norm:
-        return "Nacional"
+def derive_ambito_from_source(source: Any) -> str:
+    norm = normalize_text(source)
     if "internacional" in norm or "international" in norm:
         return "Internacional"
+    if "nacional" in norm or "national" in norm:
+        return "Nacional"
+    return ""
+
+
+def derive_via_from_source(source: Any) -> str:
+    norm = normalize_text(source)
+    if "entrante" in norm or "incoming" in norm:
+        return "Entrante"
+    if "saliente" in norm or "outgoing" in norm:
+        return "Saliente"
+    return ""
+
+
+def map_ambito(value: Any, source: Any = "") -> str:
+    norm = normalize_text(value)
+    if "internacional" in norm or "international" in norm:
+        return "Internacional"
+    if "nacional" in norm or "national" in norm:
+        return "Nacional"
+    derived = derive_ambito_from_source(source)
+    if derived:
+        return derived
     return titlecase_spanish(value)
 
 
-def map_via(value: Any) -> str:
+def map_via(value: Any, source: Any = "") -> str:
     norm = normalize_text(value)
     if "entrante" in norm or "incoming" in norm:
         return "Entrante"
     if "saliente" in norm or "outgoing" in norm:
         return "Saliente"
+    derived = derive_via_from_source(source)
+    if derived:
+        return derived
     return titlecase_spanish(value)
 
 
@@ -358,12 +422,104 @@ def map_pais_en(pais_es: str) -> str:
     return PAIS_EN_MAPPING.get(norm, pais_es)
 
 
-def map_campus(value: Any) -> str:
+def map_campus_token(value: Any) -> str:
     text = clean_missing(value)
     norm = normalize_text(text)
     if norm in CAMPUS_MAPPING:
         return CAMPUS_MAPPING[norm]
-    return text
+    return ""
+
+
+def map_campus(value: Any) -> str:
+    text = clean_missing(value)
+    if not text:
+        return "Campus Medellín"
+
+    separators = [",", ";", "|"]
+    compound = text
+    for separator in separators:
+        compound = compound.replace(separator, ",")
+    parts = [part.strip() for part in compound.split(",") if part.strip()]
+    expanded_parts: list[str] = []
+    for part in parts or [text]:
+        if " y " in normalize_text(part):
+            expanded_parts.extend(item.strip() for item in part.split(" y ") if item.strip())
+        else:
+            expanded_parts.append(part)
+
+    resolved: list[str] = []
+    unknown_found = False
+    for part in expanded_parts:
+        mapped = map_campus_token(part)
+        if mapped:
+            resolved.append(mapped)
+        else:
+            unknown_found = True
+
+    if unknown_found:
+        return "Campus Medellín"
+
+    unique_resolved = list(dict.fromkeys(resolved))
+    non_medellin = [
+        campus_name
+        for campus_name in unique_resolved
+        if campus_name not in {"Campus Medellín", "No Aplica"}
+    ]
+    if non_medellin:
+        return non_medellin[0]
+    if unique_resolved:
+        return unique_resolved[0]
+    return "Campus Medellín"
+
+
+def build_location_es(ambito: str, pais_es: str, ciudad: str) -> str:
+    if ambito == "Nacional":
+        return clean_missing(ciudad)
+    return clean_missing(pais_es)
+
+
+def build_location_en(ambito: str, country_en: str, ciudad: str) -> str:
+    if ambito == "Nacional":
+        return clean_missing(ciudad)
+    return clean_missing(country_en)
+
+
+def build_code_dictionary(codes: pd.Series, labels: pd.Series) -> dict[str, str]:
+    counts: dict[str, dict[str, int]] = {}
+    display_by_norm: dict[tuple[str, str], str] = {}
+
+    for code_value, label_value in zip(codes, labels):
+        code = clean_missing(code_value)
+        label = clean_missing(label_value)
+        if not code or not label:
+            continue
+
+        norm_label = normalize_text(label)
+        if norm_label in PLACEHOLDER_NAMES:
+            continue
+
+        counts.setdefault(code, {})
+        counts[code][norm_label] = counts[code].get(norm_label, 0) + 1
+        display_by_norm.setdefault((code, norm_label), label)
+
+    dictionary: dict[str, str] = {}
+    for code, label_counts in counts.items():
+        if not label_counts:
+            continue
+        best_norm = sorted(
+            label_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0][0]
+        dictionary[code] = display_by_norm[(code, best_norm)]
+    return dictionary
+
+
+def normalize_name_by_code(value: Any, code: Any, dictionary: dict[str, str]) -> str:
+    cleaned_value = clean_missing(value)
+    cleaned_code = clean_missing(code)
+    if cleaned_code and cleaned_code in dictionary:
+        return dictionary[cleaned_code]
+    return cleaned_value
 
 
 def join_country_city(country: str, city: str) -> str:
@@ -424,12 +580,19 @@ def build_standard_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = pd.DataFrame(data)
     df["ambito"] = df_raw.get("__ambito", pd.Series([""] * len(df_raw), index=df_raw.index))
     df["via"] = df_raw.get("__via", pd.Series([""] * len(df_raw), index=df_raw.index))
+    df["source"] = df_raw.get("__source", pd.Series([""] * len(df_raw), index=df_raw.index))
 
     for column_name in df.columns:
         df[column_name] = df[column_name].fillna("").astype(str).str.strip()
 
-    df["ambito"] = df["ambito"].apply(map_ambito)
-    df["vía"] = df["via"].apply(map_via)
+    df["ambito"] = [
+        map_ambito(ambito, source)
+        for ambito, source in zip(df["ambito"], df["source"])
+    ]
+    df["vía"] = [
+        map_via(via, source)
+        for via, source in zip(df["via"], df["source"])
+    ]
     df["categoría"] = df["categoria"].apply(map_categoria)
     df["modalidad"] = [
         map_modalidad(modalidad, ambito)
@@ -440,13 +603,24 @@ def build_standard_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         map_categoria_estudiante(cat_est, categoria)
         for cat_est, categoria in zip(df["categoria_estudiante"], df["categoría"])
     ]
-    df["movilidad_por_convenio"] = df["movilidad_por_convenio"].apply(map_yes_no)
+    unidad_dictionary = build_code_dictionary(df["codigo_unidad_udea"], df["unidad_academica"])
+    programa_dictionary = build_code_dictionary(df["codigo_programa_udea"], df["programa"])
+    df["movilidad_por_convenio"] = [
+        map_movilidad_por_convenio(value, ambito)
+        for value, ambito in zip(df["movilidad_por_convenio"], df["ambito"])
+    ]
     df["código_convenio"] = df["codigo_convenio"].apply(
         lambda value: "" if clean_missing(value) == "0" else clean_missing(value)
     )
     df["campus"] = df["campus"].apply(map_campus)
-    df["unidad_académica_administrativa"] = df["unidad_academica"].apply(clean_missing)
-    df["programa_académico"] = df["programa"].apply(clean_missing)
+    df["unidad_académica_administrativa"] = [
+        normalize_name_by_code(value, code, unidad_dictionary)
+        for value, code in zip(df["unidad_academica"], df["codigo_unidad_udea"])
+    ]
+    df["programa_académico"] = [
+        normalize_name_by_code(value, code, programa_dictionary)
+        for value, code in zip(df["programa"], df["codigo_programa_udea"])
+    ]
     df["institución/entidad"] = df["institucion"].apply(clean_missing)
     df["país_es"] = [
         map_pais_es(pais, ambito)
@@ -455,12 +629,12 @@ def build_standard_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["country_en"] = df["país_es"].apply(map_pais_en)
     df["ciudad"] = df["ciudad"].apply(clean_missing)
     df["país/ciudad"] = [
-        join_country_city(country, city)
-        for country, city in zip(df["país_es"], df["ciudad"])
+        build_location_es(ambito, country, city)
+        for ambito, country, city in zip(df["ambito"], df["país_es"], df["ciudad"])
     ]
     df["country/city"] = [
-        join_country_city(country, city)
-        for country, city in zip(df["country_en"], df["ciudad"])
+        build_location_en(ambito, country, city)
+        for ambito, country, city in zip(df["ambito"], df["country_en"], df["ciudad"])
     ]
     df["año"] = [
         parse_year(year, fecha_inicio)
@@ -476,6 +650,9 @@ def build_standard_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     result = df[TARGET_COLUMNS].copy()
     for column_name in TARGET_COLUMNS:
         result[column_name] = result[column_name].fillna("").astype(str).str.strip()
+
+    year_numeric = pd.to_numeric(result["año"], errors="coerce")
+    result = result.loc[year_numeric.ge(MIN_YEAR)].copy()
 
     result = result.sort_values(
         by=["año", "semestre", "ambito", "vía", "categoría", "país/ciudad"],
