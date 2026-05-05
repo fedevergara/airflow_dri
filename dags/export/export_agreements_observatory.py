@@ -55,6 +55,7 @@ def export_agreements_observatory() -> None:
         "AGREEMENTS_EXPORT_SHEET_NAME",
         default_var=DEFAULT_SHEET_NAME,
     )
+    spreadsheet_id = Variable.get("AGREEMENTS_EXPORT_SPREADSHEET_ID", default_var="")
     db_name = Variable.get("AGREEMENTS_EXPORT_DB", default_var="international")
     collection = Variable.get("AGREEMENTS_EXPORT_COLLECTION", default_var="agreements")
     source_type = Variable.get("AGREEMENTS_EXPORT_SOURCE_TYPE", default_var="agreements")
@@ -94,6 +95,8 @@ def export_agreements_observatory() -> None:
         f"--batch-size {_quote(str(batch_size))}",
         f"--chunk-size {_quote(str(chunk_size))}",
     ]
+    if str(spreadsheet_id).strip():
+        export_command_parts.append(f"--spreadsheet-id {_quote(spreadsheet_id)}")
     export_command = " ".join(export_command_parts)
     if dry_run:
         export_command = f"{export_command} --dry-run"
@@ -103,6 +106,7 @@ def export_agreements_observatory() -> None:
     setup_command = "\n".join(
         [
             "set -euo pipefail",
+            f"mkdir -p {_quote(remote_dir)}",
             f"cd {_quote(remote_dir)}",
             f"test -f {_quote(setup_script)}",
             " ".join(
@@ -112,6 +116,9 @@ def export_agreements_observatory() -> None:
                     f"--base-dir {_quote(remote_dir)}",
                     f"--token-path {_quote(token_path)}",
                     f"--sheet-name {_quote(sheet_name)}",
+                    f"--spreadsheet-id {_quote(spreadsheet_id)}"
+                    if str(spreadsheet_id).strip()
+                    else "",
                     "--skip-pip" if setup_skip_pip else "",
                 ]
                 if part

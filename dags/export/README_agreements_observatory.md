@@ -105,7 +105,7 @@ La hoja resultante queda normalizada con columnas coherentes con el export de mo
 - `enlace`
 - `estado`
 
-`estado` sale de la columna original cuando existe, con fallback a la hoja original del archivo (`ACTIVOS` o `INACTIVOS`). La salida se normaliza solo como `vigente` o `vencido`.
+`estado` se calcula combinando hoja de origen y `fecha_de_finalización`: los registros de la hoja de inactivos quedan siempre `vencido`; para la hoja activa/vigente, si la fecha final es menor al día actual queda `vencido`, y si la fecha es igual o posterior al día actual, o está vacía, queda `vigente`.
 
 ## 5. Prueba remota manual
 

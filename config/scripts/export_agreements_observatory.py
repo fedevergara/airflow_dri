@@ -11,9 +11,10 @@ import pickle
 import stat
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from google.auth.exceptions import RefreshError
@@ -92,12 +93,37 @@ def titlecase_spanish(value: Any) -> str:
     )
 
 
-def normalize_status(value: Any, fallback: Any = "") -> str:
-    text = clean_cell(value) or clean_cell(fallback)
-    normalized = normalize_text(text)
-    if any(marker in normalized for marker in ["activo", "activos", "vigente", "vigentes"]):
+def parse_date_value(value: Any) -> date | None:
+    text = clean_cell(value)
+    if not text:
+        return None
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        parsed = pd.to_datetime(text, errors="coerce")
+    else:
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=True)
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def current_business_date() -> date:
+    return datetime.now(ZoneInfo("America/Bogota")).date()
+
+
+def normalize_status_from_source_and_end_date(
+    *,
+    source_sheet: Any,
+    end_date_value: Any,
+    today: date | None = None,
+) -> str:
+    sheet = normalize_text(source_sheet)
+    if "inactivo" in sheet or "inactivos" in sheet:
+        return "vencido"
+
+    end_date = parse_date_value(end_date_value)
+    if end_date is None:
         return "vigente"
-    return "vencido"
+    return "vencido" if end_date < (today or current_business_date()) else "vigente"
 
 
 def map_ambito(value: Any, source: Any = "") -> str:
@@ -214,7 +240,6 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     start_parsed = start_raw.apply(parse_date_strings)
     end_parsed = end_raw.apply(parse_date_strings)
 
-    status_raw = pick_column(df_raw, ["ESTADO", "CONVENIO VIGENTE"])
     modalidad = pick_column(df_raw, ["MODALIDAD"])
     pais = pick_column(df_raw, ["PAÍS", "PAIS"])
 
@@ -265,9 +290,14 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         ["DEPENDENCIA RESPONSABLE UDEA"],
     ).where(is_international, "")
     df["enlace"] = international_link.where(is_international, national_link)
+    today = current_business_date()
     df["estado"] = [
-        normalize_status(value, fallback)
-        for value, fallback in zip(status_raw, source_sheet)
+        normalize_status_from_source_and_end_date(
+            source_sheet=sheet,
+            end_date_value=end_date_value,
+            today=today,
+        )
+        for sheet, end_date_value in zip(source_sheet, end_raw)
     ]
 
     for column in df.columns:

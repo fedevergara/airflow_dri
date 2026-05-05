@@ -5,7 +5,6 @@ from capture.capture_pipeline import build_capture_dag
 
 AGREEMENTS_REQUIRED_DATE_GROUPS = [
     ["FECHA DE INICIO", "FECHA INICIO"],
-    ["FECHA DE FINALIZACIÓN", "FECHA DE FINALIZACION", "FECHA FINALIZACIÓN"],
 ]
 
 AGREEMENTS_SOURCES = [

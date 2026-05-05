@@ -9,7 +9,9 @@ import logging
 import os
 import pickle
 import stat
+import sys
 import time
+import types
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -661,6 +663,39 @@ def build_standard_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def install_google_auth_pickle_compat() -> None:
+    module_name = "google.auth._regional_access_boundary_utils"
+    if module_name in sys.modules:
+        return
+
+    module = types.ModuleType(module_name)
+
+    class _RegionalAccessBoundaryShim:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    class _RegionalAccessBoundaryManager(_RegionalAccessBoundaryShim):
+        pass
+
+    class _RegionalAccessBoundaryData(_RegionalAccessBoundaryShim):
+        pass
+
+    class _RegionalAccessBoundaryRefreshManager(_RegionalAccessBoundaryShim):
+        pass
+
+    def _use_blocking_regional_access_boundary_lookup(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    module._RegionalAccessBoundaryManager = _RegionalAccessBoundaryManager
+    module._RegionalAccessBoundaryData = _RegionalAccessBoundaryData
+    module._RegionalAccessBoundaryRefreshManager = _RegionalAccessBoundaryRefreshManager
+    module._use_blocking_regional_access_boundary_lookup = (
+        _use_blocking_regional_access_boundary_lookup
+    )
+    sys.modules[module_name] = module
+
+
 def load_credentials(token_path: Path) -> Any:
     if not token_path.exists():
         raise FileNotFoundError(f"token.pickle not found at: {token_path}")
@@ -672,6 +707,7 @@ def load_credentials(token_path: Path) -> Any:
         )
 
     with token_path.open("rb") as token_file:
+        install_google_auth_pickle_compat()
         creds = pickle.load(token_file)
 
     if creds is None:
@@ -958,7 +994,7 @@ def main() -> None:
         "raw_rows": int(len(df_raw.index)),
         "transformed_rows": int(len(transformed.index)),
         "target_sheet": args.sheet_name,
-        "spreadsheet_id": args.spreadsheet_id,
+        "spreadsheet_id_set": bool(str(args.spreadsheet_id).strip()),
     }
 
     if args.dry_run:
