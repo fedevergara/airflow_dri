@@ -6,6 +6,8 @@ import base64
 import hashlib
 import io
 import pickle
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,67 @@ def _parse_sheet_names(value: str) -> list[str]:
     return parsed
 
 
+def _install_google_auth_pickle_compat() -> None:
+    module_name = "google.auth._regional_access_boundary_utils"
+    if module_name in sys.modules:
+        return
+
+    module = types.ModuleType(module_name)
+
+    class _RegionalAccessBoundaryShim:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    class _RegionalAccessBoundaryManager(_RegionalAccessBoundaryShim):
+        pass
+
+    class _RegionalAccessBoundaryData(_RegionalAccessBoundaryShim):
+        pass
+
+    class _RegionalAccessBoundaryRefreshManager(_RegionalAccessBoundaryShim):
+        pass
+
+    def _use_blocking_regional_access_boundary_lookup(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    module._RegionalAccessBoundaryManager = _RegionalAccessBoundaryManager
+    module._RegionalAccessBoundaryData = _RegionalAccessBoundaryData
+    module._RegionalAccessBoundaryRefreshManager = _RegionalAccessBoundaryRefreshManager
+    module._use_blocking_regional_access_boundary_lookup = (
+        _use_blocking_regional_access_boundary_lookup
+    )
+    sys.modules[module_name] = module
+
+
+def _clean_required_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.lower() in {"nan", "nat", "none", "null", "n/a", "na", "-"}:
+        return ""
+    return text
+
+
+def _record_has_required_fields(
+    payload: dict[str, Any],
+    required_groups: list[list[str]],
+) -> bool:
+    """Require at least one non-empty value in each configured alias group."""
+    if not required_groups:
+        return True
+
+    normalized_payload = {str(key).strip().upper(): value for key, value in payload.items()}
+    for group in required_groups:
+        has_value = any(
+            _clean_required_value(normalized_payload.get(str(column).strip().upper()))
+            for column in group
+        )
+        if not has_value:
+            return False
+    return True
+
+
 def _get_google_credentials(
     *,
     token_pickle_b64: str = "",
@@ -114,6 +177,7 @@ def _get_google_credentials(
     creds = None
     if token_pickle_b64:
         try:
+            _install_google_auth_pickle_compat()
             creds = pickle.loads(base64.b64decode(token_pickle_b64))
         except Exception as exc:
             raise AirflowException("Invalid GOOGLE_SHEETS_TOKEN_PICKLE_B64 value.") from exc
@@ -122,6 +186,7 @@ def _get_google_credentials(
         if not token_path.exists():
             raise AirflowException(f"Token pickle not found at '{token_pickle_path}'.")
         with token_path.open("rb") as token_file:
+            _install_google_auth_pickle_compat()
             creds = pickle.load(token_file)
     else:
         raise AirflowException("No token pickle provided.")
@@ -147,6 +212,7 @@ def _load_values_via_token_pickle(
     """Load sheet values using OAuth credentials serialized in token.pickle."""
     try:
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
     except Exception as exc:
         raise AirflowException(
             "Missing Google API libs for token.pickle auth. Install apache-airflow-providers-google."
@@ -158,14 +224,62 @@ def _load_values_via_token_pickle(
     )
 
     service = build("sheets", "v4", credentials=creds)
-    values = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=spreadsheet_id, range=range_name)
-        .execute()
-        .get("values", [])
-    )
+    try:
+        values = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=range_name)
+            .execute()
+            .get("values", [])
+        )
+    except HttpError as exc:
+        raise AirflowException(
+            "Could not read Google Sheet values. Check source type, sharing, and OAuth scopes."
+        ) from None
     return values
+
+
+def _records_from_sheet_values(values: list[list[str]], source_sheet: str = "") -> list[dict[str, Any]]:
+    if not values or len(values) < 2:
+        return []
+
+    headers = _build_headers(values[0])
+    records = []
+    for row_number, row in enumerate(values[1:], start=2):
+        normalized_row = [str(item) if item is not None else "" for item in row]
+        row_payload = {
+            header: normalized_row[idx] if idx < len(normalized_row) else ""
+            for idx, header in enumerate(headers)
+        }
+        records.append(
+            {
+                "row_number": row_number,
+                "raw_row": normalized_row,
+                "raw_payload": row_payload,
+                "source_sheet": source_sheet,
+            }
+        )
+    return records
+
+
+def _load_rows_via_sheets_workbook(
+    *,
+    spreadsheet_id: str,
+    sheet_names: list[str],
+    token_pickle_b64: str = "",
+    token_pickle_path: str = "",
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for sheet_name in sheet_names:
+        safe_sheet = sheet_name.replace("'", "''")
+        values = _load_values_via_token_pickle(
+            spreadsheet_id=spreadsheet_id,
+            range_name=f"'{safe_sheet}'!A:ZZZ",
+            token_pickle_b64=token_pickle_b64,
+            token_pickle_path=token_pickle_path,
+        )
+        records.extend(_records_from_sheet_values(values, source_sheet=sheet_name))
+    return records
 
 
 def _load_rows_via_drive_excel(
@@ -215,7 +329,9 @@ def _load_rows_via_drive_excel(
             )
             buffer = _download_to_buffer(export_request)
         else:
-            raise
+            raise AirflowException(
+                "Could not download Drive Excel file. Check sharing and OAuth Drive scopes."
+            ) from None
     try:
         excel_obj = pd.read_excel(
             buffer,
@@ -318,7 +434,7 @@ def build_capture_dag(
         tags=["capture", "google-sheets", "mongodb", source_type],
     )
     def _capture_dag() -> None:
-        @task
+        @task(show_return_value_in_logs=False)
         def resolve_sources() -> list[dict[str, Any]]:
             gcp_conn_id = Variable.get("GOOGLE_SHEETS_CONN_ID", default_var="google_sheets_default")
             mongo_conn_id = Variable.get("MONGO_CAPTURE_CONN_ID", default_var="mongo_default")
@@ -333,7 +449,7 @@ def build_capture_dag(
                 source_mode = str(source.get("source_mode", "google_sheets")).strip().lower()
                 range_raw = Variable.get(source["range_var"], default_var=source["default_range"])
 
-                if source_mode == "drive_excel":
+                if source_mode in {"drive_excel", "google_sheets_workbook"}:
                     drive_sheet_names = _parse_sheet_names(range_raw)
                     range_name = ",".join(drive_sheet_names) if drive_sheet_names else "ALL_SHEETS"
                     drive_token_path_var = source.get(
@@ -362,6 +478,7 @@ def build_capture_dag(
                         "range_name": range_name,
                         "drive_sheet_names": drive_sheet_names,
                         "drive_token_path": drive_token_path,
+                        "required_non_empty_groups": source.get("required_non_empty_groups", []),
                         "collection": source["collection"],
                         "gcp_conn_id": gcp_conn_id,
                         "mongo_conn_id": mongo_conn_id,
@@ -406,6 +523,13 @@ def build_capture_dag(
                     sheet_names=source.get("drive_sheet_names", []),
                     token_pickle_path=source["drive_token_path"],
                 )
+            elif source_mode == "google_sheets_workbook":
+                records = _load_rows_via_sheets_workbook(
+                    spreadsheet_id=source["spreadsheet_id"],
+                    sheet_names=source.get("drive_sheet_names", []),
+                    token_pickle_b64=token_pickle_b64,
+                    token_pickle_path=source.get("drive_token_path") or token_pickle_path,
+                )
             else:
                 if token_pickle_b64 or token_pickle_path:
                     values = _load_values_via_token_pickle(
@@ -436,23 +560,7 @@ def build_capture_dag(
                         "message": "Sheet has no data rows (header only or empty).",
                     }
 
-                headers = _build_headers(values[0])
-                data_rows = values[1:]
-                records = []
-                for row_number, row in enumerate(data_rows, start=2):
-                    normalized_row = [str(item) if item is not None else "" for item in row]
-                    row_payload = {
-                        header: normalized_row[idx] if idx < len(normalized_row) else ""
-                        for idx, header in enumerate(headers)
-                    }
-                    records.append(
-                        {
-                            "row_number": row_number,
-                            "raw_row": normalized_row,
-                            "raw_payload": row_payload,
-                            "source_sheet": "",
-                        }
-                    )
+                records = _records_from_sheet_values(values)
 
             if not records:
                 return {
@@ -467,10 +575,16 @@ def build_capture_dag(
             mongo_kwargs, default_db = _build_mongo_client_kwargs(source["mongo_conn_id"])
             target_db = source["mongo_db"] or default_db
             operations = []
+            skipped_missing_required_fields = 0
+            required_groups = source.get("required_non_empty_groups", [])
             for record in records:
                 row_number = int(record["row_number"])
                 normalized_row = [str(item) if item is not None else "" for item in record["raw_row"]]
                 row_payload = dict(record["raw_payload"])
+                if not _record_has_required_fields(row_payload, required_groups):
+                    skipped_missing_required_fields += 1
+                    continue
+
                 row_payload["vía"] = via
                 row_payload["ambito"] = ambito
                 source_sheet = str(record.get("source_sheet", "")).strip()
@@ -527,6 +641,7 @@ def build_capture_dag(
             mongo_client = None
             inserted = 0
             updated = 0
+            deleted = 0
             try:
                 from pymongo import MongoClient, UpdateOne
 
@@ -537,6 +652,13 @@ def build_capture_dag(
                 )
                 collection = mongo_client[target_db][source["collection"]]
                 if operations:
+                    delete_result = collection.delete_many(
+                        {
+                            "source": source["source_name"],
+                            "source_type": source["source_type"],
+                        }
+                    )
+                    deleted = int(delete_result.deleted_count or 0)
                     result = collection.bulk_write(
                         [
                             UpdateOne(
@@ -558,6 +680,8 @@ def build_capture_dag(
             return {
                 "source_name": source["source_name"],
                 "rows_processed": len(records),
+                "rows_skipped_missing_required_fields": skipped_missing_required_fields,
+                "rows_deleted": deleted,
                 "rows_inserted": inserted,
                 "rows_updated": updated,
                 "mongo_db": target_db,

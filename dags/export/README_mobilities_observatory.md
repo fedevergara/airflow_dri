@@ -70,12 +70,12 @@ Variables principales:
 Por compatibilidad, se mantienen con prefijo `MOBILITIES_TRANSFORM_` para no obligarte a reconfigurar todo en este paso.
 
 - `MOBILITIES_TRANSFORM_SSH_CONN_ID`: default `ssh_capture_default`
-- `MOBILITIES_TRANSFORM_REMOTE_DIR`: default `/srv/mobilities_transform`
-- `MOBILITIES_TRANSFORM_REMOTE_PYTHON`: default `/srv/mobilities_transform/venv/bin/python`
-- `MOBILITIES_TRANSFORM_REMOTE_SCRIPT`: default `/srv/mobilities_transform/transform_mobilities_observatory.py`
-- `MOBILITIES_TRANSFORM_REMOTE_SETUP_SCRIPT`: default `/srv/mobilities_transform/setup_mobilities_transform.py`
-- `MOBILITIES_TRANSFORM_REMOTE_ENV`: default `/srv/mobilities_transform/.env`
-- `MOBILITIES_TRANSFORM_TOKEN_PATH`: default `/srv/mobilities_transform/secrets/token.pickle`
+- `MOBILITIES_TRANSFORM_REMOTE_DIR`: ruta remota configurada en Airflow.
+- `MOBILITIES_TRANSFORM_REMOTE_PYTHON`: ruta remota al Python del venv configurada en Airflow.
+- `MOBILITIES_TRANSFORM_REMOTE_SCRIPT`: ruta remota al script configurada en Airflow.
+- `MOBILITIES_TRANSFORM_REMOTE_SETUP_SCRIPT`: ruta remota al script de setup configurada en Airflow.
+- `MOBILITIES_TRANSFORM_REMOTE_ENV`: ruta remota al `.env` configurada en Airflow.
+- `MOBILITIES_TRANSFORM_TOKEN_PATH`: ruta remota al token configurada en Airflow.
 - `MOBILITIES_TRANSFORM_DB`: default `international`
 - `MOBILITIES_TRANSFORM_COLLECTION`: default `mobilities`
 - `MOBILITIES_TRANSFORM_SOURCE_TYPE`: default `mobilities`
