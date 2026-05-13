@@ -23,8 +23,8 @@ def _quote(value: str) -> str:
 @dag(
     dag_id=DAG_ID,
     description="Export normalized mobilities from MongoDB raw data to Google Sheets.",
-    start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
-    schedule="@daily",
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    schedule="0 15 * * 5",
     catchup=False,
     max_active_runs=1,
     tags=["export", "mobilities", "mongodb", "google-sheets"],
