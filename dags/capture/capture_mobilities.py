@@ -1,5 +1,6 @@
 """Capture international and national mobilities from Google Sheets into MongoDB."""
 
+import pendulum
 from airflow.models.dag import DAG  # noqa: F401 - Helps DAG safe discovery.
 from capture.capture_pipeline import build_capture_dag
 
@@ -40,4 +41,6 @@ dag = build_capture_dag(
     description="Capture mobilities (international + national) from Google Sheets to MongoDB.",
     source_type="mobilities",
     sources=MOBILITIES_SOURCES,
+    schedule="0 14 * * 5",
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
 )

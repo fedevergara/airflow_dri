@@ -1,5 +1,6 @@
 """Capture international and national agreements from Google sources into MongoDB."""
 
+import pendulum
 from airflow.models.dag import DAG  # noqa: F401 - Helps DAG safe discovery.
 from capture.capture_pipeline import build_capture_dag
 
@@ -38,4 +39,6 @@ dag = build_capture_dag(
     description="Capture agreements (international + national) from Google sources to MongoDB.",
     source_type="agreements",
     sources=AGREEMENTS_SOURCES,
+    schedule="0 14 * * 5",
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
 )
