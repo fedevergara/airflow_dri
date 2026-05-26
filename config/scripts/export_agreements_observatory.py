@@ -176,6 +176,16 @@ def normalize_country(value: Any) -> str:
     return text
 
 
+def normalize_national_city(value: Any) -> str:
+    city = titlecase_spanish(value)
+    normalized_city = normalize_text(city)
+    if normalized_city == "florencia":
+        return "Florencia (Caquetá)"
+    if normalized_city == "armenia":
+        return "Armenia (Quindío)"
+    return city
+
+
 def is_international_scope(scope: Any) -> bool:
     return normalize_text(scope) == "internacional"
 
@@ -260,7 +270,10 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         df_raw,
         ["CÓDIGO CONVENIO", "CODIGO CONVENIO", "CÓDIGO_CONVENIO", "CODIGO_CONVENIO"],
     )
-    df["país/ciudad"] = pais.where(is_international, city).apply(normalize_country)
+    df["país/ciudad"] = [
+        normalize_country(country) if international else normalize_national_city(local_city)
+        for country, local_city, international in zip(pais, city, is_international)
+    ]
     df["institución/entidad"] = international_institution.where(
         is_international,
         national_institution,
