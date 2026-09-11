@@ -89,6 +89,7 @@ La hoja resultante queda normalizada con columnas coherentes con el export de mo
 - `país_local`
 - `institución_local`
 - `continente`
+- `departamento`
 - `código`
 - `país/ciudad`
 - `institución/entidad`
@@ -106,6 +107,13 @@ La hoja resultante queda normalizada con columnas coherentes con el export de mo
 - `estado`
 
 `estado` se calcula combinando hoja de origen y `fecha_de_finalización`: los registros de la hoja de inactivos quedan siempre `vencido`; para la hoja activa/vigente, si la fecha final es menor al día actual queda `vencido`, y si la fecha es igual o posterior al día actual, o está vacía, queda `vigente`.
+
+Reglas geográficas y académicas:
+
+- En convenios internacionales, `CONTINENTE` se normaliza con iniciales mayúsculas, `UNIDADES ACADÉMICAS` alimenta `facultades` y `DEPENDENCIA RESPONSABLE UDEA` alimenta `unidad_académica_administrativa`.
+- En convenios nacionales, `DEPARTAMENTO` se normaliza con iniciales mayúsculas, `UNIDAD ACADÉMICA` alimenta `facultades` y `DEPENDENCIA RESPONSABLE UDEA` alimenta `unidad_académica_administrativa`.
+- En convenios nacionales, tanto `CÓDIGO` como `Código de convenio` alimentan la columna `código` para conservar compatibilidad con ambas versiones de la fuente.
+- En convenios nacionales, `Florencia` se publica como `Florencia (Caquetá)` y `Armenia` como `Armenia (Quindío)`.
 
 ## 5. Prueba remota manual
 

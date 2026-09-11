@@ -17,10 +17,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from google.auth.exceptions import RefreshError
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from pymongo import MongoClient
 
 
 DEFAULT_DB_NAME = "international"
@@ -35,6 +31,7 @@ TARGET_COLUMNS = [
     "país_local",
     "institución_local",
     "continente",
+    "departamento",
     "código",
     "país/ciudad",
     "institución/entidad",
@@ -176,6 +173,20 @@ def normalize_country(value: Any) -> str:
     return text
 
 
+def normalize_geographic_group(value: Any) -> str:
+    """Normalize comma-separated continents/departments to Spanish title case."""
+    text = clean_cell(value)
+    if not text:
+        return ""
+
+    normalized_parts = [
+        titlecase_spanish(part)
+        for part in text.replace(";", ",").split(",")
+        if clean_cell(part)
+    ]
+    return ", ".join(normalized_parts)
+
+
 def normalize_national_city(value: Any) -> str:
     city = titlecase_spanish(value)
     normalized_city = normalize_text(city)
@@ -265,10 +276,28 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["ámbito"] = scope_series
     df["país_local"] = "Colombia"
     df["institución_local"] = "Universidad de Antioquia"
-    df["continente"] = pick_column(df_raw, ["CONTINENTE"]).where(is_international, "")
+    df["continente"] = (
+        pick_column(df_raw, ["CONTINENTE"])
+        .where(is_international, "")
+        .apply(normalize_geographic_group)
+    )
+    df["departamento"] = (
+        pick_column(df_raw, ["DEPARTAMENTO"])
+        .where(~is_international, "")
+        .apply(normalize_geographic_group)
+    )
     df["código"] = pick_column(
         df_raw,
-        ["CÓDIGO CONVENIO", "CODIGO CONVENIO", "CÓDIGO_CONVENIO", "CODIGO_CONVENIO"],
+        [
+            "CÓDIGO CONVENIO",
+            "CODIGO CONVENIO",
+            "CÓDIGO DE CONVENIO",
+            "CODIGO DE CONVENIO",
+            "CÓDIGO_CONVENIO",
+            "CODIGO_CONVENIO",
+            "CÓDIGO",
+            "CODIGO",
+        ],
     )
     df["país/ciudad"] = [
         normalize_country(country) if international else normalize_national_city(local_city)
@@ -297,11 +326,22 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         is_international,
         "",
     )
-    df["facultades"] = pick_column(df_raw, ["UNIDADES ACADÉMICAS", "UNIDADES ACADEMICAS", "UNIDAD ACADÉMICA", "UNIDAD ACADEMICA"])
+    international_faculties = pick_column(
+        df_raw,
+        ["UNIDADES ACADÉMICAS", "UNIDADES ACADEMICAS"],
+    ).where(is_international, "")
+    national_faculties = pick_column(
+        df_raw,
+        ["UNIDAD ACADÉMICA", "UNIDAD ACADEMICA"],
+    ).where(~is_international, "")
+    df["facultades"] = international_faculties.where(
+        is_international,
+        national_faculties,
+    )
     df["unidad_académica_administrativa"] = pick_column(
         df_raw,
         ["DEPENDENCIA RESPONSABLE UDEA"],
-    ).where(is_international, "")
+    )
     df["enlace"] = international_link.where(is_international, national_link)
     today = current_business_date()
     df["estado"] = [
@@ -330,6 +370,9 @@ def build_export_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_credentials(token_path: Path) -> Any:
+    from google.auth.exceptions import RefreshError
+    from google.auth.transport.requests import Request
+
     if not token_path.exists():
         raise FileNotFoundError(f"token.pickle not found at: {token_path}")
 
@@ -589,6 +632,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    from googleapiclient.discovery import build
+    from pymongo import MongoClient
+
     args = parse_args()
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
