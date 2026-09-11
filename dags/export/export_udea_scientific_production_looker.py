@@ -58,6 +58,12 @@ def export_udea_scientific_production_looker() -> None:
     )
     cmd_timeout = int(Variable.get("KAHI_LOOKER_CMD_TIMEOUT", default_var="7200"))
     chunk_size = int(Variable.get("KAHI_LOOKER_CHUNK_SIZE", default_var="5000"))
+    min_write_interval_seconds = float(
+        Variable.get("KAHI_LOOKER_MIN_WRITE_INTERVAL_SECONDS", default_var="1.2")
+    )
+    max_api_attempts = int(
+        Variable.get("KAHI_LOOKER_MAX_API_ATTEMPTS", default_var="8")
+    )
     dry_run = (
         Variable.get("KAHI_LOOKER_DRY_RUN", default_var="false").strip().lower()
         in {"1", "true", "yes", "y"}
@@ -69,7 +75,9 @@ def export_udea_scientific_production_looker() -> None:
         f"--institution-id {_quote(institution_id)} "
         f"--db {_quote(db_name)} "
         f"--token-path {_quote(token_path)} "
-        f"--chunk-size {_quote(str(chunk_size))}"
+        f"--chunk-size {_quote(str(chunk_size))} "
+        f"--min-write-interval-seconds {_quote(str(min_write_interval_seconds))} "
+        f"--max-api-attempts {_quote(str(max_api_attempts))}"
     )
     if dry_run:
         export_command = f"{export_command} --dry-run"
